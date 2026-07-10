@@ -16,6 +16,7 @@ import { getConversation, sendMessage, getUnreadMessageCount } from "./services/
 import { getSchools, createSchool } from "./services/schoolService";
 import { signIn, signOut, signUp, createMyProfile, getSession, getMyProfile } from "./services/authService";
 import { getPendingProfiles, approveProfile, rejectProfile } from "./services/profileService";
+import LandingPage from "./LandingPage";
 
 // ... existing code ...
 
@@ -39,6 +40,7 @@ export default function GCFlow() {
   const [currentView, setCurrentView] = useState('home');
   const [checkingSession, setCheckingSession] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "signup" | "join">("login");
+  const [showLanding, setShowLanding] = useState(true);
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -84,6 +86,9 @@ export default function GCFlow() {
   }
 
   if (!currentUser) {
+    if (showLanding) {
+      return <LandingPage onGetStarted={() => setShowLanding(false)} />;
+    }
     if (authMode === "signup") {
       return (
         <SignUpFlow

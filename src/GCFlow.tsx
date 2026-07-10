@@ -1883,7 +1883,7 @@ type CounselingSession = {
   location: string;
   notes: string;
   status: string;
-  students:
+  students?:
     | { class_name: string; profiles: Profile | Profile[] | null }
     | { class_name: string; profiles: Profile | Profile[] | null }[]
     | null;

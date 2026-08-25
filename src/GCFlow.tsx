@@ -15,7 +15,7 @@ import { getConversation, sendMessage, getUnreadMessageCount } from "./services/
 
 import { getSchools, createSchool } from "./services/schoolService";
 import { signIn, signOut, signUp, createMyProfile, getSession, getMyProfile } from "./services/authService";
-import { getPendingProfiles, approveProfile, rejectProfile } from "./services/profileService";
+import { getPendingProfiles, approveProfile, rejectProfile, updateMyProfile } from "./services/profileService";
 import LandingPage from "./LandingPage";
 
 // ... existing code ...
@@ -131,16 +131,22 @@ export default function GCFlow() {
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         <Header user={currentUser} onLogout={handleLogout} onNavigate={setCurrentView} />
         <main className="flex-1 overflow-y-auto p-4 md:p-8">
-          {currentUser.role === 'siswa' ? <StudentViews view={currentView} user={currentUser} /> : <TeacherViews view={currentView} user={currentUser} />}
+          {currentUser.role === 'siswa' ? (
+            <StudentViews
+              view={currentView}
+              user={currentUser}
+              onProfileUpdated={(fullName) => setCurrentUser((prev) => prev ? { ...prev, fullName } : prev)}
+            />
+          ) : <TeacherViews view={currentView} user={currentUser} />}
         </main>
       </div>
     </div>
   );
 }
 
-function StudentViews({ view, user }: { view: string; user: User }) {
+function StudentViews({ view, user, onProfileUpdated }: { view: string; user: User; onProfileUpdated: (fullName: string) => void }) {
   switch(view) {
-    case 'profil': return <StudentProfile />;
+    case 'profil': return <StudentProfile user={user} onProfileUpdated={onProfileUpdated} />;
     case 'mading': return <SchoolBoardView />;
     case 'home':
     default: return <StudentDashboard user={user} />;
@@ -1125,6 +1131,9 @@ type Student = {
   kelas: string;
   label: string;
   avatar: string;
+  waliKelas: string;
+  counselorName: string;
+  status: string;
 };
 
 function TeacherDashboard({ user }: { user: User }) {
@@ -1332,6 +1341,15 @@ function StudentDetailModal({ student, onClose }: { student: Student; onClose: (
         </div>
 
         <div className="p-6 space-y-6">
+          <div>
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Info Akademik</h4>
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2 text-sm">
+              <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">{student.waliKelas}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Guru BK Utama</span><span className="font-bold text-slate-700">{student.counselorName}</span></div>
+              <div className="flex justify-between items-center"><span className="text-slate-500">Status</span><span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full text-xs">{student.status === "active" ? "Aktif" : student.status}</span></div>
+            </div>
+          </div>
+
           {loading ? (
             <p className="text-sm text-slate-400 text-center">Memuat...</p>
           ) : (
@@ -1405,7 +1423,63 @@ function StatCard({ title, value, icon, alert }: StatCardProps) {
 // ==========================================
 // 5. NEW VIEWS (PAGES)
 // ==========================================
-function StudentProfile() {
+function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdated: (fullName: string) => void }) {
+  const [studentRecord, setStudentRecord] = useState<{
+    id: string;
+    nis: string;
+    class_name: string;
+    homeroom_teacher: string | null;
+    status: string;
+    counselor: { full_name: string } | { full_name: string }[] | null;
+  } | null>(null);
+  const [journalCount, setJournalCount] = useState(0);
+  const [sessionCount, setSessionCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [nameInput, setNameInput] = useState(user.fullName);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const record = await getMyStudentRecord(user.profileId);
+        setStudentRecord(record);
+        if (record) {
+          const [journals, sessions] = await Promise.all([
+            getJournals(record.id),
+            getCounselingSessionsForStudent(record.id),
+          ]);
+          setJournalCount(journals.length);
+          setSessionCount(sessions.length);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [user.profileId]);
+
+  const handleSaveName = async () => {
+    if (!nameInput.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateMyProfile(user.profileId, { full_name: nameInput.trim() });
+      onProfileUpdated(nameInput.trim());
+      setEditing(false);
+    } catch (err) {
+      console.error(err);
+      setError("Gagal menyimpan nama. Coba lagi.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const counselor = one(studentRecord?.counselor);
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn pb-20">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1415,24 +1489,49 @@ function StudentProfile() {
           </div>
         </div>
         <div className="pt-14 p-8">
-          <h2 className="text-2xl font-black text-slate-800">Andi Pratama</h2>
-          <p className="text-slate-500 font-medium">Siswa • XI IPA 1</p>
-          
+          {editing ? (
+            <div className="flex items-center gap-2 mb-1">
+              <input
+                type="text"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                className="text-2xl font-black text-slate-800 border-b-2 border-[#F4B942] focus:outline-none px-1"
+              />
+              <button onClick={handleSaveName} disabled={saving} className="text-sm font-bold text-white bg-[#1B2A4A] px-3 py-1.5 rounded-lg disabled:opacity-50">
+                {saving ? "..." : "Simpan"}
+              </button>
+              <button onClick={() => { setEditing(false); setNameInput(user.fullName); }} className="text-sm font-bold text-slate-400 px-2">
+                Batal
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-black text-slate-800">{user.fullName}</h2>
+              <button onClick={() => setEditing(true)} className="text-xs font-bold text-slate-400 hover:text-slate-600 underline">
+                Edit Nama
+              </button>
+            </div>
+          )}
+          {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+          <p className="text-slate-500 font-medium">
+            Siswa {studentRecord?.class_name ? `• ${studentRecord.class_name}` : ""}
+          </p>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
             <div className="space-y-4">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Info Akademik</h3>
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                <div className="flex justify-between"><span className="text-slate-500">NIS</span><span className="font-bold text-slate-700">1001</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">Bpk. Haryanto</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">NIS</span><span className="font-bold text-slate-700">{loading ? "..." : studentRecord?.nis ?? "-"}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">{loading ? "..." : studentRecord?.homeroom_teacher ?? "Belum diisi"}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Status</span><span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full text-xs">Aktif</span></div>
               </div>
             </div>
             <div className="space-y-4">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Statistik Konseling</h3>
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                <div className="flex justify-between"><span className="text-slate-500">Jurnal Ditulis</span><span className="font-bold text-slate-700">14</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Sesi Konseling</span><span className="font-bold text-slate-700">2</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Guru BK Utama</span><span className="font-bold text-slate-700">Ibu Rina</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Jurnal Ditulis</span><span className="font-bold text-slate-700">{loading ? "..." : journalCount}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Sesi Konseling</span><span className="font-bold text-slate-700">{loading ? "..." : sessionCount}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Guru BK Utama</span><span className="font-bold text-slate-700">{loading ? "..." : counselor?.full_name ?? "Belum ditentukan"}</span></div>
               </div>
             </div>
           </div>

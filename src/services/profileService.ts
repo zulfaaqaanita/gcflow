@@ -38,3 +38,19 @@ export async function rejectProfile(id: string) {
   if (error) throw error;
   return data;
 }
+
+// Lets the currently-logged-in user edit their own display name.
+// Requires the "self update profile" RLS policy (see the SQL snippet
+// provided alongside this fix) — without it, this call gets silently
+// blocked by Postgres RLS.
+export async function updateMyProfile(id: string, updates: { full_name: string }) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}

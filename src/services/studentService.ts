@@ -6,7 +6,10 @@ import { supabase } from "../lib/supabase";
 export async function getMyStudentRecord(profileId: string) {
   const { data, error } = await supabase
     .from("students")
-    .select("id, nis, class_name")
+    .select(`
+      id, nis, class_name, homeroom_teacher, status,
+      counselor:profiles!students_counselor_id_fkey ( full_name )
+    `)
     .eq("profile_id", profileId)
     .maybeSingle();
 
@@ -20,6 +23,9 @@ export async function getStudents() {
     .select(`
       *,
       profiles!students_profile_id_fkey (
+        full_name
+      ),
+      counselor:profiles!students_counselor_id_fkey (
         full_name
       )
     `);
@@ -36,6 +42,9 @@ export async function getStudents() {
     // update this to derive the label from another field.
     label: student.status ?? "Belum Ada Label",
     avatar: "👨‍🎓",
+    waliKelas: student.homeroom_teacher ?? "Belum diisi",
+    counselorName: student.counselor?.full_name ?? "Belum ditentukan",
+    status: student.status ?? "active",
   }));
 }
 

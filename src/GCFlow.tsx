@@ -570,20 +570,23 @@ function JoinSchoolFlow({
         return;
       }
 
-      const profile = await createMyProfile({
+      const profile = (await getMyProfile()) ?? (await createMyProfile({
         full_name: fullName.trim(),
         school_id: selectedSchool.id,
         role,
         status: "pending",
-      });
+      }));
 
       if (role === "siswa") {
-        await createMyStudentRecord({
-          profile_id: profile.id,
-          school_id: selectedSchool.id,
-          nis: nis.trim(),
-          class_name: className.trim(),
-        });
+        const existingStudent = await getMyStudentRecord(profile.id);
+        if (!existingStudent) {
+          await createMyStudentRecord({
+            profile_id: profile.id,
+            school_id: selectedSchool.id,
+            nis: nis.trim(),
+            class_name: className.trim(),
+          });
+        }
       }
 
       onRegistered({
@@ -595,7 +598,12 @@ function JoinSchoolFlow({
       });
     } catch (err) {
       console.error(err);
-      setError(err instanceof Error ? err.message : "Gagal mendaftar. Coba lagi.");
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("students_nis_key") || message.includes("duplicate key")) {
+        setError("NIS ini sudah terdaftar oleh siswa lain. Coba masukkan NIS yang berbeda.");
+      } else {
+        setError(message || "Gagal mendaftar. Coba lagi.");
+      }
     } finally {
       setSubmitting(false);
     }

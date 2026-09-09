@@ -55,6 +55,37 @@ export async function updateMyProfile(id: string, updates: { full_name: string }
   return data;
 }
 
+// Uploads a profile photo to the "avatars" storage bucket and saves the
+// public URL onto the caller's profiles row. Requires:
+// 1. A public bucket named "avatars" in Supabase Storage.
+// 2. A storage policy letting a user upload/update objects under a path
+//    prefixed with their own profileId (see the SQL/dashboard steps
+//    provided alongside this feature).
+export async function uploadAvatar(profileId: string, file: File) {
+  const fileExt = file.name.split(".").pop();
+  const filePath = `${profileId}/avatar.${fileExt}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("avatars")
+    .upload(filePath, file, { upsert: true, cacheControl: "3600" });
+
+  if (uploadError) throw uploadError;
+
+  const { data: publicUrlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
+  // Cache-bust so the new photo shows immediately instead of the browser
+  // reusing a cached image at the same URL.
+  const avatarUrl = `${publicUrlData.publicUrl}?t=${Date.now()}`;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ avatar_url: avatarUrl })
+    .eq("id", profileId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
 // List of approved guru/teacher/principal in a school — used to populate
 // the "Guru BK Utama" (counselor) dropdown when editing a student record.
 export async function getTeachersInSchool(schoolId: string) {

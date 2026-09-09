@@ -11,6 +11,7 @@ export type MyProfile = {
   rawRole: string;
   school_id: string;
   status: ApprovalStatus;
+  avatar_url: string | null;
 };
 
 // Seed/legacy data uses English role names ('student', 'teacher',
@@ -58,7 +59,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, full_name, email, role, school_id, status")
+    .select("id, full_name, email, role, school_id, status, avatar_url")
     .eq("user_id", userData.user.id)
     .maybeSingle();
 

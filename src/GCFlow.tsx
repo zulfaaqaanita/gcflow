@@ -15,7 +15,7 @@ import { getConversation, sendMessage, getUnreadMessageCount } from "./services/
 
 import { getSchools, createSchool } from "./services/schoolService";
 import { signIn, signOut, signUp, createMyProfile, getSession, getMyProfile } from "./services/authService";
-import { getPendingProfiles, approveProfile, rejectProfile, updateMyProfile, getTeachersInSchool } from "./services/profileService";
+import { getPendingProfiles, approveProfile, rejectProfile, updateMyProfile, getTeachersInSchool, uploadAvatar } from "./services/profileService";
 import LandingPage from "./LandingPage";
 
 // ... existing code ...
@@ -33,6 +33,7 @@ type User = {
   schoolId: string;
   fullName: string;
   status: 'pending' | 'approved' | 'rejected';
+  avatarUrl: string | null;
 };
 
 export default function GCFlow() {
@@ -55,6 +56,7 @@ export default function GCFlow() {
               schoolId: profile.school_id,
               fullName: profile.full_name,
               status: profile.status,
+              avatarUrl: profile.avatar_url,
             });
           }
         }
@@ -135,7 +137,7 @@ export default function GCFlow() {
             <StudentViews
               view={currentView}
               user={currentUser}
-              onProfileUpdated={(fullName) => setCurrentUser((prev) => prev ? { ...prev, fullName } : prev)}
+              onProfileUpdated={(updates) => setCurrentUser((prev) => prev ? { ...prev, ...updates } : prev)}
             />
           ) : <TeacherViews view={currentView} user={currentUser} />}
         </main>
@@ -144,7 +146,7 @@ export default function GCFlow() {
   );
 }
 
-function StudentViews({ view, user, onProfileUpdated }: { view: string; user: User; onProfileUpdated: (fullName: string) => void }) {
+function StudentViews({ view, user, onProfileUpdated }: { view: string; user: User; onProfileUpdated: (updates: { fullName?: string; avatarUrl?: string }) => void }) {
   switch(view) {
     case 'profil': return <StudentProfile user={user} onProfileUpdated={onProfileUpdated} />;
     case 'mading': return <SchoolBoardView />;
@@ -226,6 +228,7 @@ function LoginFlow({ onLogin, onGoToSignUp, onGoToJoin }: { onLogin: (user: User
         schoolId: profile.school_id,
         fullName: profile.full_name,
         status: profile.status,
+        avatarUrl: profile.avatar_url,
       });
     } catch (err) {
       console.error(err);
@@ -404,6 +407,7 @@ function SignUpFlow({
         schoolId: school.id,
         fullName: profile.full_name,
         status: "approved",
+        avatarUrl: null,
       });
     } catch (err) {
       console.error(err);
@@ -595,6 +599,7 @@ function JoinSchoolFlow({
         schoolId: selectedSchool.id,
         fullName: profile.full_name,
         status: "pending",
+        avatarUrl: profile.avatar_url ?? null,
       });
     } catch (err) {
       console.error(err);
@@ -1538,7 +1543,7 @@ function StatCard({ title, value, icon, alert }: StatCardProps) {
 // ==========================================
 // 5. NEW VIEWS (PAGES)
 // ==========================================
-function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdated: (fullName: string) => void }) {
+function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdated: (updates: { fullName?: string; avatarUrl?: string }) => void }) {
   const [studentRecord, setStudentRecord] = useState<{
     id: string;
     nis: string;
@@ -1561,6 +1566,36 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
   const [academicForm, setAcademicForm] = useState({ nis: "", class_name: "", homeroom_teacher: "", counselor_id: "" });
   const [savingAcademic, setSavingAcademic] = useState(false);
   const [academicError, setAcademicError] = useState<string | null>(null);
+
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ""; // allow re-selecting the same file later
+
+    if (!file.type.startsWith("image/")) {
+      setAvatarError("File harus berupa gambar (JPG, PNG, dll).");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAvatarError("Ukuran foto maksimal 2MB.");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setAvatarError(null);
+    try {
+      const updated = await uploadAvatar(user.profileId, file);
+      onProfileUpdated({ avatarUrl: updated.avatar_url });
+    } catch (err) {
+      console.error(err);
+      setAvatarError("Gagal mengunggah foto. Coba lagi.");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -1600,7 +1635,7 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
     setError(null);
     try {
       await updateMyProfile(user.profileId, { full_name: nameInput.trim() });
-      onProfileUpdated(nameInput.trim());
+      onProfileUpdated({ fullName: nameInput.trim() });
       setEditing(false);
     } catch (err) {
       console.error(err);
@@ -1650,11 +1685,24 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
     <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn pb-20">
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="h-32 bg-[#1B2A4A] relative">
-          <div className="absolute -bottom-10 left-8 w-24 h-24 bg-white rounded-full flex items-center justify-center text-4xl border-4 border-white shadow-md">
-            👨‍🎓
-          </div>
+          <label
+            htmlFor="avatar-upload"
+            className="absolute -bottom-10 left-8 w-24 h-24 bg-white rounded-full flex items-center justify-center text-4xl border-4 border-white shadow-md cursor-pointer overflow-hidden group"
+            title="Klik untuk ganti foto"
+          >
+            {user.avatarUrl ? (
+              <img src={user.avatarUrl} alt={user.fullName} className="w-full h-full object-cover" />
+            ) : (
+              "👨‍🎓"
+            )}
+            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold text-center px-1">
+              {uploadingAvatar ? "Mengunggah..." : "Ganti Foto"}
+            </div>
+            <input id="avatar-upload" type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" disabled={uploadingAvatar} />
+          </label>
         </div>
         <div className="pt-14 p-8">
+          {avatarError && <p className="text-xs text-red-500 mb-2">{avatarError}</p>}
           {editing ? (
             <div className="flex items-center gap-2 mb-1">
               <input

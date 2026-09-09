@@ -7,7 +7,7 @@ export async function getMyStudentRecord(profileId: string) {
   const { data, error } = await supabase
     .from("students")
     .select(`
-      id, nis, class_name, homeroom_teacher, status,
+      id, nis, class_name, homeroom_teacher, status, counselor_id,
       counselor:profiles!students_counselor_id_fkey ( full_name )
     `)
     .eq("profile_id", profileId)
@@ -44,8 +44,34 @@ export async function getStudents() {
     avatar: "👨‍🎓",
     waliKelas: student.homeroom_teacher ?? "Belum diisi",
     counselorName: student.counselor?.full_name ?? "Belum ditentukan",
+    counselorId: student.counselor_id ?? null,
     status: student.status ?? "active",
   }));
+}
+
+// Updates a student's academic info. Used both by the student editing
+// their own record (RLS: "self update own student record") and by a
+// teacher/admin overriding it (RLS: "staff can update school students").
+// Which one actually succeeds is enforced by Postgres RLS, not by this
+// function — see the SQL snippet in the fix notes.
+export async function updateStudentRecord(
+  studentId: string,
+  updates: Partial<{
+    nis: string;
+    class_name: string;
+    homeroom_teacher: string | null;
+    counselor_id: string | null;
+  }>
+) {
+  const { data, error } = await supabase
+    .from("students")
+    .update(updates)
+    .eq("id", studentId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 // Called by a teacher/admin adding a student manually from the roster

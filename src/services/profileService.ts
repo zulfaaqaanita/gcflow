@@ -54,3 +54,18 @@ export async function updateMyProfile(id: string, updates: { full_name: string }
   if (error) throw error;
   return data;
 }
+
+// List of approved guru/teacher/principal in a school — used to populate
+// the "Guru BK Utama" (counselor) dropdown when editing a student record.
+export async function getTeachersInSchool(schoolId: string) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name")
+    .eq("school_id", schoolId)
+    .in("role", ["guru", "teacher", "principal"])
+    .eq("status", "approved")
+    .order("full_name", { ascending: true });
+
+  if (error) throw error;
+  return data;
+}

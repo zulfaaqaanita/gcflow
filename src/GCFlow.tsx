@@ -2,7 +2,7 @@
 import React, {useEffect, useState } from 'react';
 import { BookOpen, Calendar, ChevronRight, GraduationCap, LayoutDashboard, LogOut, Mail, MessageSquare, PlusCircle, Search, User, Users, CheckCircle, Clock, Send } from 'lucide-react';
 import { getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement } from "./services/announcementService";
-import { getStudents, createMyStudentRecord, createStudentRecord, getMyStudentRecord } from "./services/studentService";
+import { getStudents, createMyStudentRecord, createStudentRecord, getMyStudentRecord, updateStudentRecord } from "./services/studentService";
 import { getJournals, createJournal, markJournalHandled } from "./services/journalService";
 import { getTeacherMailbox } from "./services/teacherMailboxService";
 import { getCounselingSessions, getCounselingSessionsForStudent, createCounselingSession, updateCounselingSessionStatus, rescheduleCounselingSession } from "./services/counselingSessionService";
@@ -15,7 +15,7 @@ import { getConversation, sendMessage, getUnreadMessageCount } from "./services/
 
 import { getSchools, createSchool } from "./services/schoolService";
 import { signIn, signOut, signUp, createMyProfile, getSession, getMyProfile } from "./services/authService";
-import { getPendingProfiles, approveProfile, rejectProfile, updateMyProfile } from "./services/profileService";
+import { getPendingProfiles, approveProfile, rejectProfile, updateMyProfile, getTeachersInSchool } from "./services/profileService";
 import LandingPage from "./LandingPage";
 
 // ... existing code ...
@@ -1141,6 +1141,7 @@ type Student = {
   avatar: string;
   waliKelas: string;
   counselorName: string;
+  counselorId: string | null;
   status: string;
 };
 
@@ -1304,16 +1305,42 @@ function TeacherDashboard({ user }: { user: User }) {
       </div>
 
       {detailStudent && (
-        <StudentDetailModal student={detailStudent} onClose={() => setDetailStudent(null)} />
+        <StudentDetailModal
+          student={detailStudent}
+          schoolId={user.schoolId}
+          onClose={() => setDetailStudent(null)}
+          onUpdated={fetchStudents}
+        />
       )}
     </div>
   );
 }
 
-function StudentDetailModal({ student, onClose }: { student: Student; onClose: () => void }) {
+function StudentDetailModal({
+  student,
+  schoolId,
+  onClose,
+  onUpdated,
+}: {
+  student: Student;
+  schoolId: string;
+  onClose: () => void;
+  onUpdated: () => void;
+}) {
   const [journals, setJournals] = useState<Journal[]>([]);
   const [sessions, setSessions] = useState<CounselingSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [local, setLocal] = useState(student);
+  const [editing, setEditing] = useState(false);
+  const [teachers, setTeachers] = useState<{ id: string; full_name: string }[]>([]);
+  const [form, setForm] = useState({
+    nis: student.nis,
+    kelas: student.kelas,
+    waliKelas: student.waliKelas === "Belum diisi" ? "" : student.waliKelas,
+    counselorId: student.counselorId ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -1334,15 +1361,54 @@ function StudentDetailModal({ student, onClose }: { student: Student; onClose: (
     fetchDetail();
   }, [student.id]);
 
+  useEffect(() => {
+    getTeachersInSchool(schoolId).then(setTeachers).catch(console.error);
+  }, [schoolId]);
+
+  const handleSave = async () => {
+    if (!form.nis.trim() || !form.kelas.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateStudentRecord(student.id, {
+        nis: form.nis.trim(),
+        class_name: form.kelas.trim(),
+        homeroom_teacher: form.waliKelas.trim() || null,
+        counselor_id: form.counselorId || null,
+      });
+      const counselorName = teachers.find((t) => t.id === updated.counselor_id)?.full_name ?? "Belum ditentukan";
+      setLocal({
+        ...local,
+        nis: updated.nis,
+        kelas: updated.class_name,
+        waliKelas: updated.homeroom_teacher ?? "Belum diisi",
+        counselorName,
+        counselorId: updated.counselor_id,
+      });
+      setEditing(false);
+      onUpdated();
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("students_nis_key") || message.includes("duplicate key")) {
+        setError("NIS ini sudah dipakai siswa lain.");
+      } else {
+        setError("Gagal menyimpan. Coba lagi.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="p-6 border-b border-slate-100 flex justify-between items-start sticky top-0 bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-2xl border border-slate-200">{student.avatar}</div>
+            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-2xl border border-slate-200">{local.avatar}</div>
             <div>
-              <h3 className="font-bold text-slate-800">{student.name}</h3>
-              <p className="text-xs text-slate-500">{student.kelas} • NIS: {student.nis}</p>
+              <h3 className="font-bold text-slate-800">{local.name}</h3>
+              <p className="text-xs text-slate-500">{local.kelas} • NIS: {local.nis}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
@@ -1350,12 +1416,53 @@ function StudentDetailModal({ student, onClose }: { student: Student; onClose: (
 
         <div className="p-6 space-y-6">
           <div>
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Info Akademik</h4>
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">{student.waliKelas}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Guru BK Utama</span><span className="font-bold text-slate-700">{student.counselorName}</span></div>
-              <div className="flex justify-between items-center"><span className="text-slate-500">Status</span><span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full text-xs">{student.status === "active" ? "Aktif" : student.status}</span></div>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Info Akademik</h4>
+              {!editing && (
+                <button onClick={() => setEditing(true)} className="text-xs font-bold text-[#1B2A4A] underline">
+                  Edit
+                </button>
+              )}
             </div>
+
+            {editing ? (
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                <div>
+                  <label className="text-xs text-slate-500">NIS</label>
+                  <input type="text" value={form.nis} onChange={(e) => setForm({ ...form, nis: e.target.value })} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Kelas</label>
+                  <input type="text" value={form.kelas} onChange={(e) => setForm({ ...form, kelas: e.target.value })} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Wali Kelas</label>
+                  <input type="text" value={form.waliKelas} onChange={(e) => setForm({ ...form, waliKelas: e.target.value })} placeholder="Nama wali kelas" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Guru BK Utama</label>
+                  <select value={form.counselorId} onChange={(e) => setForm({ ...form, counselorId: e.target.value })} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]">
+                    <option value="">Belum ditentukan</option>
+                    {teachers.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                  </select>
+                </div>
+                {error && <p className="text-xs text-red-500">{error}</p>}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button onClick={() => { setEditing(false); setError(null); setForm({ nis: local.nis, kelas: local.kelas, waliKelas: local.waliKelas === "Belum diisi" ? "" : local.waliKelas, counselorId: local.counselorId ?? "" }); }} className="text-xs font-bold text-slate-400 px-3 py-1.5">
+                    Batal
+                  </button>
+                  <button onClick={handleSave} disabled={saving} className="text-xs font-bold text-white bg-[#1B2A4A] px-3 py-1.5 rounded-lg disabled:opacity-50">
+                    {saving ? "Menyimpan..." : "Simpan"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">{local.waliKelas}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Guru BK Utama</span><span className="font-bold text-slate-700">{local.counselorName}</span></div>
+                <div className="flex justify-between items-center"><span className="text-slate-500">Status</span><span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full text-xs">{local.status === "active" ? "Aktif" : local.status}</span></div>
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -1438,6 +1545,7 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
     class_name: string;
     homeroom_teacher: string | null;
     status: string;
+    counselor_id: string | null;
     counselor: { full_name: string } | { full_name: string }[] | null;
   } | null>(null);
   const [journalCount, setJournalCount] = useState(0);
@@ -1448,12 +1556,24 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [teachers, setTeachers] = useState<{ id: string; full_name: string }[]>([]);
+  const [editingAcademic, setEditingAcademic] = useState(false);
+  const [academicForm, setAcademicForm] = useState({ nis: "", class_name: "", homeroom_teacher: "", counselor_id: "" });
+  const [savingAcademic, setSavingAcademic] = useState(false);
+  const [academicError, setAcademicError] = useState<string | null>(null);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
         const record = await getMyStudentRecord(user.profileId);
         setStudentRecord(record);
         if (record) {
+          setAcademicForm({
+            nis: record.nis ?? "",
+            class_name: record.class_name ?? "",
+            homeroom_teacher: record.homeroom_teacher ?? "",
+            counselor_id: record.counselor_id ?? "",
+          });
           const [journals, sessions] = await Promise.all([
             getJournals(record.id),
             getCounselingSessionsForStudent(record.id),
@@ -1470,6 +1590,10 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
     fetchData();
   }, [user.profileId]);
 
+  useEffect(() => {
+    getTeachersInSchool(user.schoolId).then(setTeachers).catch(console.error);
+  }, [user.schoolId]);
+
   const handleSaveName = async () => {
     if (!nameInput.trim()) return;
     setSaving(true);
@@ -1483,6 +1607,40 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
       setError("Gagal menyimpan nama. Coba lagi.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveAcademic = async () => {
+    if (!studentRecord || !academicForm.nis.trim() || !academicForm.class_name.trim()) return;
+    setSavingAcademic(true);
+    setAcademicError(null);
+    try {
+      const updated = await updateStudentRecord(studentRecord.id, {
+        nis: academicForm.nis.trim(),
+        class_name: academicForm.class_name.trim(),
+        homeroom_teacher: academicForm.homeroom_teacher.trim() || null,
+        counselor_id: academicForm.counselor_id || null,
+      });
+      const counselorName = teachers.find((t) => t.id === updated.counselor_id)?.full_name;
+      setStudentRecord({
+        ...studentRecord,
+        nis: updated.nis,
+        class_name: updated.class_name,
+        homeroom_teacher: updated.homeroom_teacher,
+        counselor_id: updated.counselor_id,
+        counselor: counselorName ? { full_name: counselorName } : null,
+      });
+      setEditingAcademic(false);
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("students_nis_key") || message.includes("duplicate key")) {
+        setAcademicError("NIS ini sudah dipakai siswa lain.");
+      } else {
+        setAcademicError("Gagal menyimpan. Coba lagi.");
+      }
+    } finally {
+      setSavingAcademic(false);
     }
   };
 
@@ -1527,12 +1685,67 @@ function StudentProfile({ user, onProfileUpdated }: { user: User; onProfileUpdat
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
             <div className="space-y-4">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Info Akademik</h3>
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-                <div className="flex justify-between"><span className="text-slate-500">NIS</span><span className="font-bold text-slate-700">{loading ? "..." : studentRecord?.nis ?? "-"}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">{loading ? "..." : studentRecord?.homeroom_teacher ?? "Belum diisi"}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Status</span><span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full text-xs">Aktif</span></div>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Info Akademik</h3>
+                {!editingAcademic && studentRecord && (
+                  <button onClick={() => setEditingAcademic(true)} className="text-xs font-bold text-slate-400 hover:text-slate-600 underline">
+                    Edit
+                  </button>
+                )}
               </div>
+
+              {editingAcademic ? (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                  <div>
+                    <label className="text-xs text-slate-500">NIS</label>
+                    <input type="text" value={academicForm.nis} onChange={(e) => setAcademicForm({ ...academicForm, nis: e.target.value })} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Kelas</label>
+                    <input type="text" value={academicForm.class_name} onChange={(e) => setAcademicForm({ ...academicForm, class_name: e.target.value })} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Wali Kelas</label>
+                    <input type="text" value={academicForm.homeroom_teacher} onChange={(e) => setAcademicForm({ ...academicForm, homeroom_teacher: e.target.value })} placeholder="Nama wali kelas" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500">Guru BK Utama</label>
+                    <select value={academicForm.counselor_id} onChange={(e) => setAcademicForm({ ...academicForm, counselor_id: e.target.value })} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F4B942]">
+                      <option value="">Belum ditentukan</option>
+                      {teachers.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                    </select>
+                  </div>
+                  {academicError && <p className="text-xs text-red-500">{academicError}</p>}
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      onClick={() => {
+                        setEditingAcademic(false);
+                        setAcademicError(null);
+                        if (studentRecord) {
+                          setAcademicForm({
+                            nis: studentRecord.nis ?? "",
+                            class_name: studentRecord.class_name ?? "",
+                            homeroom_teacher: studentRecord.homeroom_teacher ?? "",
+                            counselor_id: studentRecord.counselor_id ?? "",
+                          });
+                        }
+                      }}
+                      className="text-xs font-bold text-slate-400 px-3 py-1.5"
+                    >
+                      Batal
+                    </button>
+                    <button onClick={handleSaveAcademic} disabled={savingAcademic} className="text-xs font-bold text-white bg-[#1B2A4A] px-3 py-1.5 rounded-lg disabled:opacity-50">
+                      {savingAcademic ? "Menyimpan..." : "Simpan"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
+                  <div className="flex justify-between"><span className="text-slate-500">NIS</span><span className="font-bold text-slate-700">{loading ? "..." : studentRecord?.nis ?? "-"}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Wali Kelas</span><span className="font-bold text-slate-700">{loading ? "..." : studentRecord?.homeroom_teacher ?? "Belum diisi"}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Status</span><span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full text-xs">Aktif</span></div>
+                </div>
+              )}
             </div>
             <div className="space-y-4">
               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Statistik Konseling</h3>
